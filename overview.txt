@@ -1,0 +1,364 @@
+EL_5th_Sem — Engineering Overview
+
+Microcontroller, Powering, Development Environment, Procurement, and CAN-FD Monitoring
+Prepared: 23 October 2026
+Repository: https://github.com/Chirag-R-Karanth/EL_5th_Sem
+
+IMPORTANT SCOPE NOTE
+The repository TODO names five work items but does not identify a target MCU, source supply voltage, connector pinout, electrical loads, network bit rates, or monitored target. The reference directory contains Architecture Overview.png and Flowchart.png, but those binary diagrams were not readable through the available text-only repository connector. This guide explains the engineering decisions and gives a safe bring-up plan; it does not pretend unknown hardware choices are finalized. Confirm device-specific details against the actual schematic, datasheet, and reference manual before powering hardware.
+
+CONTENTS
+1. System goal and high-level architecture
+2. Microcontroller: what it does and how to choose one
+3. Power architecture and safe bring-up
+4. Development environment and firmware workflow
+5. Vendors and procurement strategy
+6. CAN-FD from fundamentals to implementation
+7. Cross-monitoring and listen-only operation
+8. Bench validation, failure diagnosis, and test plan
+9. Decisions still required
+10. Reference material
+11. Quick review sheet
+12. TODO coverage status
+
+1. SYSTEM GOAL AND HIGH-LEVEL ARCHITECTURE
+
+The TODO describes a controller-based system that needs power, firmware development, procurement, and CAN-FD communication for “cross monitoring and listening.” The sensible first model is a CAN-FD node connected to an existing bus, either as a passive observer or as a second controller that exchanges test messages with another node.
+
+Typical data path:
+
+Power input -> protection and regulators -> microcontroller and debug interface
+Microcontroller CAN-FD controller -> CAN transceiver -> CANH/CANL bus
+Bus traffic -> transceiver receiver -> CAN-FD controller -> firmware filters / receive FIFO -> timestamped log or diagnostic output
+
+Three distinct layers must not be confused:
+
+- CAN-FD protocol controller: creates/parses frames, handles arbitration, bit timing, CRC, acknowledgements, error counters, and receive/transmit buffers. It may be integrated inside the MCU or implemented in an external controller.
+- CAN transceiver: converts controller logic-level TX/RX signals into differential electrical signals on CANH and CANL. A protocol controller cannot directly drive the physical bus.
+- Firmware/application: configures the peripheral, defines filters and message identifiers, handles received frames, timestamps them, and applies monitoring logic.
+
+A fourth layer is the power system. Working firmware is irrelevant if rails are noisy, undervoltage, sequenced incorrectly, or incompatible with the selected MCU/transceiver.
+
+Recommended project stages:
+1. Identify exact hardware and constraints.
+2. Power the board safely and verify every rail.
+3. Build and flash a minimal firmware image.
+4. Prove MCU-to-transceiver and CAN-FD operation using two known-good nodes.
+5. Enable passive/listen-only monitoring on the target network.
+6. Validate timestamps, filters, bus loading, error handling, and recovery.
+
+2. STUDY THE MICROCONTROLLER
+
+2.1 What the MCU contributes
+A microcontroller combines a processor core, program memory, RAM, peripheral blocks, clocking, interrupt logic, and pins. The core executes the program; flash stores firmware; RAM holds temporary state; peripherals handle timing-sensitive tasks such as CAN messaging without requiring the CPU to bit-bang every edge.
+
+For CAN-FD work, the key selection question is whether the MCU contains a CAN-FD controller—not merely a Classical CAN controller. A CAN 2.0-only peripheral cannot be made CAN-FD capable by firmware alone. If it lacks integrated CAN-FD, use a supported external CAN-FD controller plus a transceiver, accepting added SPI traffic, interrupt handling, and integration complexity.
+
+2.2 Selection checklist
+- CAN peripheral: integrated CAN-FD/FDCAN/FlexCAN capability; number of independent controllers; receive FIFO depth; transmit queue/mailbox limits; hardware filters; timestamp support.
+- Bit timing: separate arbitration and data-phase timing, bit-rate switching (BRS), and support for target data rates.
+- Clock: stable source and tolerance suitable for CAN timing; confirm peripheral clock limits in the reference manual.
+- Compute and memory: CPU capacity for receive bursts, logging, diagnostics, application work; enough RAM for queues and buffers.
+- Electrical interface: I/O voltage compatibility with transceiver TXD/RXD/VIO pins; available pins and alternate-function mapping.
+- Debug: accessible SWD/JTAG or vendor debug port, boot mode, and recovery path.
+- Power: allowed supply range, current budget, low-power requirements, and regulator requirements.
+- Lifecycle/support: datasheet/reference manual, errata, SDK maturity, examples, long-term availability, and board cost.
+- Environmental requirements: temperature range, ESD/transient exposure, and safety/qualification needs, if any.
+
+Do not select an MCU by CPU MHz alone. CAN-FD reliability depends on clock configuration, peripheral implementation, transceiver, PCB layout, bus topology, and bit timing.
+
+2.3 Integrated controller or external controller?
+Option A — MCU with integrated CAN-FD: its peripheral connects to a CAN-FD transceiver through TX/RX signals. This is usually cleaner: fewer components, lower latency, fewer SPI transactions, and simpler firmware.
+
+Option B — MCU without integrated CAN-FD: an external CAN-FD controller communicates with the MCU over SPI and connects to a transceiver. This preserves an existing host MCU, but adds parts, clock requirements where applicable, interrupt lines, driver dependencies, and SPI throughput constraints.
+
+For a new design, prefer integrated CAN-FD if it meets requirements. For an existing host MCU that cannot change, consider an external controller only after validating the driver, SPI throughput, interrupt behavior, and compatibility.
+
+2.4 Read the right documents in order
+1. Datasheet: supply ranges, absolute maximum ratings, pinout, electrical characteristics, package, peripheral availability.
+2. Reference manual: clock tree, GPIO alternate functions, CAN-FD registers, filters, FIFOs, error status, interrupts, timing registers.
+3. Errata: silicon-specific bugs/workarounds.
+4. SDK/manual examples: build system, startup code, linker script, clock init, vendor CAN examples.
+5. Board schematic: real pins, oscillator, termination jumpers, regulators, connectors, transceiver standby pin, debug access.
+
+2.5 First MCU bring-up sequence
+- Identify exact part number and board revision.
+- Verify rails, reset state, and clock source before debugging CAN.
+- Connect debugger and flash the smallest supported example.
+- Confirm heartbeat through GPIO or UART. This validates build, flash, reset, clock, and runtime.
+- Initialize CAN-FD using vendor-supported code and inspect status/configuration where practical.
+- Start on a low-risk bench network with two known-good nodes and short twisted-pair cable.
+- Connect to the real monitoring network only after the bench test passes.
+
+3. POWERING
+
+3.1 Why power needs separate treatment
+Power design includes input supply, protection, conversion efficiency, regulator stability, startup transient, grounding, and current peaks. Supply droop or resets can cause CAN errors that look like protocol bugs.
+
+The repository does not state input voltage or load current, so exact regulator, fuse, and resistor values cannot responsibly be specified. Derive them from the real supply, datasheets, and measured loads.
+
+3.2 Map the power tree
+Record each rail and its loads before selecting components. Example only:
+
+Input connector -> reverse-polarity/transient protection (if required) -> input filtering -> regulator(s) -> MCU core / MCU I/O / transceiver / debug accessories
+
+The real tree may differ. Some MCUs use an external input rail but generate internal core rails; others need several supplies or special analog, backup, or USB pins. Follow the exact MCU datasheet and board schematic.
+
+Create a rail budget listing rail name, nominal voltage, min/max allowed voltage at each load, steady/peak current, startup/inrush behavior, regulator rating and thermal dissipation, required decoupling, test point, and measured value.
+
+For a linear regulator, approximate dissipation as P_loss = (V_in - V_out) * I_out. A large voltage drop at meaningful current can overheat it. A switching regulator is often more efficient but adds layout, switching-noise, and stability concerns. Choose based on power loss, noise sensitivity, load profile, efficiency, thermal margin, and complexity.
+
+3.3 Protection and decoupling
+Depending on source and environment, consider reverse-polarity protection, fuse/current limiting, transient-voltage suppression, input filtering, and brownout monitoring. The right circuit depends on whether the source is USB, a bench supply, a vehicle battery, or another source. Automotive battery inputs need a different protection strategy from a clean bench supply.
+
+Place local bypass capacitors at IC supply pins using manufacturer-recommended values and layout. Bulk capacitance near the connector/regulator supports lower-frequency load changes; small ceramics close to the IC reduce high-frequency impedance. Correct nominal capacitance with poor placement is not effective decoupling.
+
+Keep high-current/switching return paths from corrupting sensitive references or the CAN interface. Use short regulator switching loops, correct ground returns, controlled routing around the oscillator, and compact transceiver/bus-protection routing.
+
+3.4 Sequential power-up test
+1. Inspect for shorts, polarity errors, solder bridges, incorrect jumper positions.
+2. Use a current-limited bench supply at the documented voltage; set a conservative limit based on expected startup current.
+3. Power with external loads and CAN bus disconnected initially.
+4. Measure important rails and input current; use an oscilloscope for startup, ripple, and resets where available.
+5. Check regulator/IC temperature; remove power if current, voltage, or temperature is abnormal.
+6. Confirm stable reset release and heartbeat firmware.
+7. Connect transceiver and test network only after local power is stable.
+8. Test restart and brownout behavior; recovery should be predictable and should not leave transceiver in an unintended state.
+
+3.5 Power failure symptoms
+- High current: short, wrong polarity, solder fault, damaged IC, regulator instability.
+- Repeated MCU resets: rail droop, brownout threshold, watchdog, clock startup, or firmware.
+- CAN fails only during transmission: supply droop, grounding/EMI, bit timing, wiring, termination.
+- Hot regulator: excessive drop/current, oscillation, insufficient thermal area, incorrect part.
+- Debugger not detected: check power, ground reference, reset, boot straps, wiring, and target voltage first.
+
+4. DEVELOPMENT ENVIRONMENT
+
+4.1 The environment is a reproducible toolchain, not just an IDE
+A working embedded toolchain includes compiler, assembler, linker, debugger, programmer/flasher, SDK or HAL, build system, serial/logging tools, and version control. If another machine cannot reproduce the build, the project is fragile.
+
+Typical components:
+- Toolchain: vendor-supported GCC/LLVM or proprietary compiler for the selected MCU.
+- Build system: vendor IDE project or maintained CMake/Make flow.
+- Debugging: GDB with supported probe/debug server or vendor debugger.
+- SDK/HAL: clock/startup code, peripheral headers, CAN-FD driver, linker script, device packs.
+- Communication tools: serial terminal, CAN interface tool, frame logger, and a second CAN-FD node/interface.
+- Git: source, configuration, scripts, tests, README. Keep generated build folders and secrets out of commits.
+
+Use vendor-supported tools for the first working build. After a known-good example works, decide whether moving to CMake or another workflow adds value. Rewriting the build system before validating hardware wastes time.
+
+4.2 Suggested structure
+firmware/
+  src/          application and project-owned drivers
+  include/      public project headers
+  board/        board-specific pin and clock configuration
+  tests/        unit/host-side tests where practical
+  config/       documented build and CAN parameters
+scripts/        repeatable build/flash/log helpers
+hardware/       schematics, PCB files, pin tables, BOM
+docs/           wiring, bring-up, protocol matrix, decisions
+README.md       prerequisites and exact build/run steps
+
+Record vendor SDK code origin/license. Keep application policy separate from low-level driver details where practical.
+
+4.3 Firmware layering
+Separate hardware initialization (clocks, GPIO, watchdog, power signals); CAN driver/configuration (nominal/data timing, filters, RX/TX queues, interrupts, error counters); transport/logging (timestamps, formatting, drop counters, bounded buffers); application logic; and diagnostics (startup self-check, peripheral state, bus-off recovery, firmware version/build ID).
+
+Avoid lengthy logging/parsing in a CAN interrupt. Capture/enqueue the minimum data and return; process later. Otherwise bursts can cause dropped frames or latency. With an RTOS define queue ownership/synchronization; with a superloop ensure the loop drains traffic fast enough and buffers remain bounded.
+
+4.4 Reproducible setup
+- Record MCU model, board revision, SDK/compiler versions, probe, OS, and CAN interface.
+- Pin known-good tool versions or document installation commands.
+- Build from a clean checkout using one documented command.
+- Flash and verify heartbeat firmware.
+- Store CAN timing in one named configuration, not scattered magic numbers.
+- Emit firmware version/commit ID in diagnostic output.
+- Document recovery if the target is bricked and how to restore debug access.
+
+5. VENDORS AND PROCUREMENT
+
+5.1 Buy by requirements
+The TODO says “Vendors to pocure” (likely procurement). Make a BOM and define mandatory constraints first. Exact part numbers cannot be finalized until MCU, supply, CAN channel count, target bitrate, environment, connector, budget, and availability are known.
+
+Procurement categories:
+- MCU/evaluation board, preferably one with integrated CAN-FD for a new platform.
+- CAN-FD transceiver matched to supply, logic levels, data rate, standby/wake behavior, package, and environment.
+- PC CAN interface/analyzer with CAN-FD support and explicit listen-only mode.
+- Debug probe/cables compatible with the MCU.
+- Regulators, protection, capacitors, connectors, fuses, test points.
+- Twisted-pair cable, connectors, correct termination, optional ESD/transient protection.
+- Current-limited bench supply, multimeter, and oscilloscope/logic analyzer as needed.
+
+5.2 Vendor families to evaluate (not an approved BOM)
+- STMicroelectronics: STM32 families with FDCAN and Cube/IDE/application-note ecosystem.
+- NXP: S32K automotive MCU families with CAN-FD peripherals and automotive-oriented tooling.
+- Microchip: PIC/SAM devices with integrated CAN-FD; MCP2517FD/MCP2518FD external CAN-FD controller families for suitable host MCUs.
+- Texas Instruments: CAN-FD transceivers and external-controller solutions such as TCAN4550.
+
+Verify current datasheets, errata, authorized distributor availability, minimum order quantities, lifecycle status, and lead times before procurement. Vendor presence alone does not prove suitability or current stock.
+
+5.3 Development board versus custom PCB
+For first proof of concept, use development boards and a known-good CAN-FD USB/interface if possible. Prove firmware and protocol operation before adding PCB layout and power-integrity variables. Design a custom PCB after pinout, connectors, power, transceiver, protection, mechanical dimensions, and test points are stable.
+
+5.4 BOM fields
+Part | Manufacturer | Exact part number | Function | Electrical constraints | Package | Quantity | Unit price | Source | Lead time | Lifecycle status | Alternate | Datasheet URL | Design notes
+
+Choose alternates by electrical compatibility, not similar name. For transceivers confirm CAN-FD data rate, supply, common-mode range, standby logic, TXD/RXD behavior, fault protection, temperature grade, and intended bus environment.
+
+6. CAN-FD: FUNDAMENTALS TO IMPLEMENTATION
+
+6.1 What CAN is
+Controller Area Network (CAN) is a multi-master, message-oriented serial bus. Nodes send frames on a shared differential bus. The identifier participates in arbitration priority; it is not simply a destination address. Multiple nodes can receive the same frame and decide in firmware whether its payload matters.
+
+CAN uses dominant and recessive logical bus states represented physically by the differential CANH/CANL pair. During arbitration, a node transmitting recessive but observing dominant knows it lost arbitration and stops transmitting without corrupting the winner. This is non-destructive arbitration and lets higher-priority identifiers win access.
+
+6.2 Why CAN-FD exists
+Classical CAN carries up to 8 data bytes per frame. CAN-FD increases payload to 64 bytes and permits a higher data-phase bitrate while retaining a slower arbitration phase when bit-rate switching is enabled. Larger payloads reduce overhead for data-heavy messages. Actual usable rates depend on controllers, transceivers, clocks, wiring, topology, and timing margins; a headline maximum is not a guarantee for a particular wiring harness.
+
+CAN-FD is defined in the ISO 11898-1 family. Use the edition required by the application and check compatibility of devices/tools on the network.
+
+6.3 Arbitration and data phases
+A CAN-FD frame starts at the nominal/arbitration bit rate. If BRS enables switching, the faster data bit rate is used for the relevant data portion. The controller switches timing at protocol-defined points and returns to nominal timing as required before acknowledgement/end portions. Hardware handles protocol details, but firmware must configure correct nominal and data timing.
+
+Key concepts:
+- Identifier: 11-bit base or 29-bit extended ID; lower numeric identifiers generally win arbitration in the same comparison context.
+- FDF/EDL: identifies CAN-FD format relative to Classical CAN.
+- BRS: selects whether the frame switches to the configured data-phase bitrate.
+- ESI: indicates the transmitter's error state (error-active or error-passive).
+- DLC: data length code maps to lengths up to 64 bytes; not every integer length from 9 through 64 is represented directly.
+- CRC: detects transmission corruption. CAN-FD has stronger CRC handling than Classical CAN and defined bit-stuffing rules.
+- ACK: a receiver can acknowledge a correctly received frame at protocol level. ACK does not mean the application accepted or acted upon the message.
+- Error counters/bus-off: hardware tracks protocol errors and can enter bus-off after severe error accumulation. Firmware must observe and handle this.
+
+6.4 Bit timing
+Bit timing is not just a bitrate number. A nominal bit time is divided into time quanta and segments, with a prescaler, sample point, and synchronization jump width. CAN-FD data phase has separate timing. The sample point must account for propagation delays in the network and transceiver/cable.
+
+Do not blindly copy timing from another board. Confirm peripheral clock first, then use vendor timing tools/documentation. Nodes must agree on nominal bitrate; with BRS they must also agree on data bitrate and compatible timing. Mismatches can cause error frames, retransmissions, or no usable traffic.
+
+For initial bench testing, begin with conservative bitrates supported by development-board examples. Increase only once stable. Target-network settings must come from network documentation or measurement, not guesswork.
+
+6.5 Physical bus and termination
+CANH and CANL form a differential pair. Use suitable twisted-pair wiring, keep stubs short, avoid star wiring unless designed for it, and follow transceiver/system guidance. Fast data phases reduce tolerance for long stubs and poor topology.
+
+A properly designed linear CAN bus is normally terminated at its two physical ends with 120-ohm resistors, not at every node. With power off and both terminators present, resistance across CANH/CANL often reads about 60 ohms because two 120-ohm resistors are in parallel. This is a sanity check, not a substitute for checking the real topology; split termination or disconnected nodes can affect measurements.
+
+Do not add termination to an existing bus unless you have confirmed the node is at an end and termination is not already present. Extra termination can overload the driver; missing termination can create reflections and data-phase errors.
+
+6.6 Controller versus transceiver
+Integrated-controller MCU: MCU TX output goes to transceiver TXD; transceiver RXD returns to MCU RX; CANH/CANL connect to the bus. Transceiver enable/standby must be correct and logic levels compatible.
+
+External-controller MCU: MCU communicates with a separate CAN-FD controller over SPI. The controller then connects via TX/RX to a physical transceiver. This requires a suitable driver and adds complexity.
+
+The controller handles frame-level protocol; the transceiver handles electrical transmission/reception. Confusing them leads to wrong component selection.
+
+6.7 Frames, identifiers, and filters
+Decide whether the monitor accepts every ID or a known subset. Hardware filters reduce interrupt/CPU load, but overly restrictive filters can hide needed frames. Start with permissive/receive-all filters on an isolated bench bus, then narrow them after comparing logs with a reference analyzer.
+
+For each monitored ID, document standard/extended format, Classical/CAN-FD expectation, payload length, BRS expectation, period/trigger if known, signal encoding/scaling only if decoding is required, expected sender, validity checks, and handling of unknown IDs.
+
+Record timestamp, channel, ID, frame format, BRS, length, payload bytes, error/status flags, and drop counters where supported. Document whether timestamps are hardware or software and the clock basis.
+
+7. CROSS-MONITORING AND LISTEN-ONLY OPERATION
+
+7.1 Possible interpretations
+“Cross monitoring and listening” is not a single standardized feature. It could mean passive observation of an existing bus; two controllers listening to each other on a bench bus; comparing a node's transmitted messages with an independent logger; or receiving traffic from multiple CAN channels and comparing timing/content.
+
+The safest first implementation is passive monitoring of the existing bus, followed by a separate bench test exchanging frames between two controlled nodes. Do not inject test traffic into a live control network without authorization and a defined test plan.
+
+7.2 Normal mode versus listen-only
+In normal mode, an interface can transmit and participate in acknowledgement/error signaling according to controller behavior. In listen-only/silent mode, a properly configured controller observes frames without transmitting acknowledgements or active error flags. Use this when the monitor must not influence the network.
+
+A passive observer does not supply an ACK. If the network relies on the monitor as the only possible acknowledger, senders may retransmit or report errors; a correctly operating bus should have its own active receivers. Validate exact silent-mode behavior against the specific controller/tool documentation: names like “silent”, “monitor”, and “listen-only” can differ.
+
+7.3 Implementation outline
+1. Configure correct peripheral clock and CAN-FD nominal/data timing.
+2. Set controller to documented listen-only/silent mode.
+3. Start with permissive filters and verify frames arrive.
+4. Enable RX FIFO/queue and receive notifications/interrupts.
+5. In interrupt path, read/enqueue efficiently; never block on slow UART/USB/console output.
+6. In main loop/task, add timestamps, frame metadata, loss/error statistics.
+7. Export to a structured log or PC capture tool.
+8. Confirm no transmission through controller status and, if possible, an independent analyzer.
+9. Run under representative traffic and inspect FIFO overrun, dropped frames, resets, and timestamp drift.
+
+7.4 Receive pipeline and overflow
+An RX interrupt should do minimum work: acknowledge the proper cause, drain/read frames using the vendor API, copy to a bounded ring buffer, update counters, and return. Format/decode later. Avoid dynamic allocation in a high-rate receive path unless runtime/timing are understood.
+
+Track frames received by type, FIFO/software overflow, protocol error state, bus-off events/recovery attempts, maximum queue occupancy, and dropped log records. A logger that silently drops frames is worse than one that reports the loss.
+
+7.5 Comparing two observations
+Collect logs from target controller and an independent analyzer/receiver. Normalize timestamp origins. Compare ID, frame format, BRS, payload length/data, frame order, and timing tolerance. Timestamp precision and exact timestamp point can differ, so small offsets do not automatically indicate different traffic.
+
+Test:
+- Known periodic frame, if available, to compare expected/measured period.
+- CAN-FD frame with BRS off.
+- CAN-FD frame with BRS on, if supported by both nodes.
+- Payload over 8 bytes.
+- Standard and extended IDs where required.
+- Traffic bursts to exercise FIFOs.
+- Error/bus-off observation via controlled fault injection only on an isolated test network.
+
+7.6 Safety boundary
+CAN is a shared control network, not a security boundary. Do not transmit crafted frames, change termination, or disconnect nodes on a live vehicle/industrial control bus as exploratory testing. Use isolated hardware and authorization. Passive monitoring should use listen-only mode and a physically appropriate interface. Monitoring alone does not decrypt/authenticate payloads or establish that messages are trustworthy.
+
+8. BENCH VALIDATION AND TROUBLESHOOTING
+
+8.1 Staged proof plan
+Stage A — Power only. Acceptance: correct rails, acceptable current, no abnormal heating, clean reset.
+Stage B — MCU alive. Acceptance: debugger attaches, firmware flashes, heartbeat works, build reproducible.
+Stage C — Controller configured. Acceptance: peripheral clock/timing verified; no unexpected init error.
+Stage D — Two-node bench CAN-FD. Acceptance: controlled nodes exchange frames at known nominal/data rates, including payload over 8 bytes; independent analyzer confirms format and payload.
+Stage E — Passive monitor. Acceptance: captures known frames while not transmitting; counts/logs match reference analyzer within known timestamp/tool limits.
+Stage F — Stress and recovery. Acceptance: bursts do not silently lose frames; counters work; reset/bus-off handling documented; recovery is safe.
+Stage G — Target network. Only after earlier stages pass and the network owner approves. Record timing/topology and begin in passive mode.
+
+8.2 Diagnostic table
+- No frames received: check CANH/CANL, ground/reference, transceiver enable/standby, pin mux, filters, bus activity, nominal timing, mode, CAN-FD support.
+- Classical CAN works but CAN-FD does not: check controller/transceiver/analyzer CAN-FD capability, FD acceptance, BRS/data timing, driver/API, Classical-only mode.
+- No-BRS frames work but BRS fails: check data bitrate/timing, peripheral clock, transceiver speed, wiring/stubs, topology, interface limits.
+- Intermittent high-rate errors: check signal integrity, termination, cable/stubs, sample point, clock accuracy, supply noise, grounding, buffer overruns.
+- Monitor appears to disturb the bus: confirm listen-only mode and tool settings; inspect transmit enable/auxiliary behaviors.
+- Log entries missing while controller receives: check interrupt starvation, ring buffer, blocking output, task priorities, queue ownership, overflow counters.
+- Bus-off: inspect wiring, bitrate mismatch, transceiver mode, missing acknowledgers in normal mode, and noise. Use documented recovery; don't blindly reset in a tight loop.
+
+9. DECISIONS STILL REQUIRED
+
+Before production implementation or approving a final BOM, resolve:
+1. Exact MCU/board model and revision.
+2. Integrated CAN-FD or external controller.
+3. Input supply voltage/source, current budget, environmental/transient exposure.
+4. Number of CAN channels and their roles.
+5. Target nominal/data bitrates, BRS, standard/extended IDs, known traffic specification.
+6. Intended meaning of cross-monitoring: passive capture, second receiver, or multi-channel comparison.
+7. Whether listen-only is mandatory on the actual network.
+8. Platform/IDE/SDK and debug probe.
+9. Budget, quantity, deadline, and availability constraints.
+10. Inspect the architecture overview and flowchart diagrams against this guide before treating any signal/block as confirmed.
+
+These choices determine MCU, transceiver, regulator, protection, connector, firmware architecture, and test plan.
+
+10. REFERENCE MATERIAL
+
+See refrences.txt for source descriptions and direct vendor/standards links.
+
+11. QUICK REVIEW SHEET
+
+- Architecture: MCU CAN-FD controller -> CAN transceiver -> CANH/CANL. Controller handles protocol; transceiver handles electrical levels.
+- CAN-FD: up to 64 data bytes; BRS can use slower arbitration and faster data phase. Actual rates depend on network components/topology.
+- MCU: verify CAN-FD peripheral, timing, clocks, filters, FIFO, pin mux, memory, SDK, errata, and lifecycle.
+- Power: derive regulator/protection values from actual rails/loads; current-limit first startup; test before connecting bus.
+- Termination: normally 120 ohms at both ends of a linear bus; two appear as about 60 ohms in parallel with power off. Do not add blindly.
+- Passive monitoring: documented listen-only mode; verify no transmit. A passive observer does not ACK.
+- Development: reproducible build + heartbeat, controller setup, two-node bench test, passive capture, then target network.
+- Procurement: select using real electrical/timing/interface/lifecycle requirements.
+- Safety: no exploratory transmission or wiring changes on a live control bus without authorization.
+
+12. TODO COVERAGE STATUS
+
+[x] Study the Microcontroller — selection criteria, reference documents, and bring-up sequence covered.
+[x] Powering — power tree, protection, regulator trade-offs, and safe bring-up covered.
+[x] Development environment — toolchain, project layout, firmware layering, and reproducible builds covered.
+[x] Vendors to procure — candidate vendor families and procurement/BOM criteria covered; exact parts pending hardware requirements.
+[x] Enabling CAN-FD communication for cross monitoring and listening — protocol fundamentals, listen-only behavior, receive pipeline, validation, and troubleshooting covered.
+
+“Covered” means the topic has an in-depth explanation and implementation plan. It does not mean the hardware has been tested or the final BOM approved.

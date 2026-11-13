@@ -19,7 +19,7 @@ Assess data-center cooling performance using publicly available facility-level, 
 
 | ID | Source | What it contains | Intended use | Important limitation |
 |---|---|---|---|---|
-| D1 | [Epoch AI — AI data centers](https://epoch.ai/data/ai-data-centers) | Facility-level estimates of site, IT power, compute and cost, plus separate chiller and cooling-tower CSV tables. The page was updated Nov. 6, 2026 and reported 96 sites, 15.1 GW IT power and 45% coverage. | Macro-level context from facility data; inspect the separate chiller and cooling-tower tables for cooling infrastructure attributes. | The main facility table is not thermal telemetry. Chiller/tower equipment records are not automatically measured cooling energy or temperature time series. Preserve estimates/measurements distinction. Record download date and methodology/version. |
+| D1 | [Epoch AI — AI data centers](https://epoch.ai/data/ai-data-centers) | Facility-level estimates of site, IT power, compute and cost, plus separate chiller and cooling-tower equipment reference CSVs. The page lists separate downloads for these tables. | Macro-level context from facility data; analyze chiller and cooling-tower product specifications separately as equipment reference data. | The main facility table is not thermal telemetry. Chiller/tower tables are equipment reference data, not verified inventories of equipment installed at each listed data center, nor measured cooling energy or temperature. Preserve estimates/measurements distinction. Record download date and methodology/version. |
 | D2 | [Zenodo — Numerical and experimental dataset for an air-cooled data center](https://zenodo.org/records/7035829) | Experimental temperature data plus OpenFOAM scenarios and post-processed CFD results for previous and retrofitted air-cooled layouts. | Primary engineering dataset for thermal distribution, airflow/CFD comparisons and retrofit analysis. | Large archive (~310.9 MB total); inspect archive structure and metadata before selecting files. The record indicates a newer version exists, so check it before analysis. |
 | D3 | [Kula et al. (2025), Energies 18(10), 2581](https://www.mdpi.com/1996-1073/18/10/2581) | Research paper describing operational sensor data and time-series forecasting of warm/hot-corridor temperature. | Methodology/reference paper: preprocessing, 15-minute resampling, feature engineering, temporal validation and model comparison. | This URL is a paper, not a downloadable dataset. Its data availability statement says supporting data are available from the corresponding author on reasonable request. The paper also points to a separate Kaggle dataset by mbjunior; do not confuse that with D4. |
 | D4 | [Kaggle — Hyperscale Data Center Dataset](https://www.kaggle.com/datasets/deeplumiere/hyperscale-data-center-dataset) | Dataset listing; exact schema and provenance have not yet been verified. | Candidate for facility-level comparison after inspecting files, columns, units, coverage and provenance. | Do not assume it contains cooling telemetry. Download and inspect the data card, license, files, units and missingness before using it. |
@@ -33,8 +33,8 @@ These sources are complementary, not interchangeable:
 
 - **D1:** facility-scale context plus distinct cooling-equipment inventory tables (chillers and cooling towers); verify their columns before claiming efficiency metrics.
 - **D4:** candidate facility-scale dataset; verify schema and provenance before assigning a role.
-- **D2:** physical thermal/airflow evidence from experiment and CFD.
-- **D3:** peer-reviewed modelling methodology and a reference for forecasting thermal conditions; the paper itself does not provide an open raw dataset at this URL.
+- **D2:** physical thermal evidence from experiments and CFD. The experimental archive uses 11 rack-exhaust temperature sensors in a 2 kW operating scenario, sampled at 0.1 Hz for two hours for previous and retrofitted designs.
+- **D3:** peer-reviewed modelling methodology and a reference for forecasting thermal conditions; the paper's underlying data are available from the corresponding author on reasonable request. It links to a separate Kaggle dataset by mbjunior, not the deeplumiere dataset listed as D4.
 
 Do not concatenate these datasets into one table. They describe different entities, spatial scales, time resolutions and measurement processes.
 
@@ -92,9 +92,9 @@ Produce a dataset inventory table and a data dictionary before modelling.
 - Inspect airflow/velocity fields and pressure/flow metrics if present.
 - Quantify changes using consistent regions, boundary conditions and units.
 
-### Phase 3 — Modelling (only if the data supports it)
+### Phase 3 — Modelling (optional; skip if time is limited)
 
-A defensible first model is hot-aisle / hot-corridor temperature forecasting using time-ordered sensor data.
+A forecasting model is optional and should only be attempted if a sufficiently long, correctly timestamped time series is available. The small two-hour Zenodo experiment is better suited to descriptive and comparative thermal analysis than generalizable machine learning.
 
 - Baseline: persistence / last-value forecast and linear regression.
 - Models: Random Forest and XGBoost; consider a time-series model only after establishing a baseline.
@@ -151,8 +151,8 @@ State whether a negative change is desirable for the particular metric. For temp
 
 ## Immediate next steps
 
-1. Download D2's experimental temperature archive first; inspect its README/metadata and file tree before touching the full CFD archives.
-2. Download D1's main AI data-center CSV and its separate `Data center cooling: Chillers` and `Data center cooling: Cooling towers` CSVs. The page documents all three downloads; retain them as separate tables and preserve the access date/version.
+1. Download only D2's small `data.tar.xz` experimental archive first (462 kB on the cited record). Inspect its README/metadata and extracted file tree. Do not download the 100+ MB CFD scenario archives unless the experimental comparison is complete.
+2. Download D1's main AI data-center CSV and optionally the separate chiller and cooling-tower equipment reference CSVs. Keep them separate and do not imply that product records are installed-site inventories.
 3. Obtain D4 and inspect its data card, schema and license. Do not use it until its contents are verified.
 4. Treat D3 as a methodology source; if its underlying operational data is required, follow the paper's data-request route or evaluate the separate dataset linked by the paper.
 5. Build the dataset audit notebook before producing charts or training models.
@@ -163,3 +163,32 @@ State whether a negative change is desirable for the particular metric. For temp
 - Kuzay et al., Numerical and experimental dataset for an air-cooled data center, Zenodo, DOI: 10.5281/zenodo.7035829
 - Kula et al. (2025), Modelling the Temperature of a Data Centre Cooling System Using Machine Learning Methods, Energies 18(10), 2581. https://doi.org/10.3390/en18102581
 - Kaggle, Hyperscale Data Center Dataset: https://www.kaggle.com/datasets/deeplumiere/hyperscale-data-center-dataset
+
+
+## Tomorrow-deadline execution plan
+
+Prioritize the following sequence. Do not expand scope unless all earlier outputs are complete.
+
+1. **Dataset inspection (45 minutes):** download Zenodo `data.tar.xz`, extract it, inspect the files; download Epoch's main CSV. Record versions and licenses.
+2. **Thermal analysis (2 hours):** identify previous/retrofitted sensor readings, verify units and sampling, plot all sensor traces and sensor-wise distributions, calculate per-sensor and aggregate changes.
+3. **Engineering interpretation (45 minutes):** compare average, maximum and high-percentile exhaust temperatures; explain spatial variation and limitations. Do not claim energy savings unless energy data supports it.
+4. **Epoch context (45 minutes):** summarize facility-scale records and, if time allows, chiller/cooling-tower equipment reference attributes as separate tables.
+5. **Report and slides (3.5 hours):** prepare a concise report and 8–10 slides with methods, plots, findings, limitations and references.
+6. **Reproducibility check (1 hour):** rerun the analysis from a clean environment and verify figure labels, units, file paths and citations.
+
+### Minimum thermal figures
+
+- Temperature versus time for all 11 sensors, previous and retrofitted.
+- Boxplot/violin plot of sensor temperature distributions by design.
+- Per-sensor mean temperature comparison.
+- Per-sensor maximum or 95th-percentile temperature comparison.
+- Temperature reduction by sensor (with sign convention stated).
+
+### Guardrails
+
+- Confirm whether the raw archive stores temperatures in °C or another unit; never assume.
+- Confirm that sensor labels map to the same physical positions between designs.
+- Compare equivalent operating conditions (2 kW) only.
+- Do not treat repeated time samples as independent experimental replicates.
+- Report the number of sensors and duration; do not overstate statistical significance.
+- A lower exhaust temperature alone does not prove lower cooling energy use.

@@ -19,16 +19,20 @@ Assess data-center cooling performance using publicly available facility-level, 
 
 | ID | Source | What it contains | Intended use | Important limitation |
 |---|---|---|---|---|
-| D1 | [Epoch AI — AI data centers](https://epoch.ai/data/ai-data-centers) | Facility-level estimates of site, IT power, compute and cost for large AI data centers. The page reported 96 sites and 15.1 GW combined IT power when checked on 13 Nov 2026. | Macro-level context; compare site scale, geography, compute and estimated facility overhead. | Not a cooling telemetry dataset. Facility power/overhead estimates do not reveal actual cooling-system efficiency or temperature. Record download date and methodology/version. |
+| D1 | [Epoch AI — AI data centers](https://epoch.ai/data/ai-data-centers) | Facility-level estimates of site, IT power, compute and cost, plus separate chiller and cooling-tower CSV tables. The page was updated Nov. 6, 2026 and reported 96 sites, 15.1 GW IT power and 45% coverage. | Macro-level context from facility data; inspect the separate chiller and cooling-tower tables for cooling infrastructure attributes. | The main facility table is not thermal telemetry. Chiller/tower equipment records are not automatically measured cooling energy or temperature time series. Preserve estimates/measurements distinction. Record download date and methodology/version. |
 | D2 | [Zenodo — Numerical and experimental dataset for an air-cooled data center](https://zenodo.org/records/7035829) | Experimental temperature data plus OpenFOAM scenarios and post-processed CFD results for previous and retrofitted air-cooled layouts. | Primary engineering dataset for thermal distribution, airflow/CFD comparisons and retrofit analysis. | Large archive (~310.9 MB total); inspect archive structure and metadata before selecting files. The record indicates a newer version exists, so check it before analysis. |
 | D3 | [Kula et al. (2025), Energies 18(10), 2581](https://www.mdpi.com/1996-1073/18/10/2581) | Research paper describing operational sensor data and time-series forecasting of warm/hot-corridor temperature. | Methodology/reference paper: preprocessing, 15-minute resampling, feature engineering, temporal validation and model comparison. | This URL is a paper, not a downloadable dataset. Its data availability statement says supporting data are available from the corresponding author on reasonable request. The paper also points to a separate Kaggle dataset by mbjunior; do not confuse that with D4. |
 | D4 | [Kaggle — Hyperscale Data Center Dataset](https://www.kaggle.com/datasets/deeplumiere/hyperscale-data-center-dataset) | Dataset listing; exact schema and provenance have not yet been verified. | Candidate for facility-level comparison after inspecting files, columns, units, coverage and provenance. | Do not assume it contains cooling telemetry. Download and inspect the data card, license, files, units and missingness before using it. |
 
 ### Source distinction
 
+Epoch AI's page explicitly lists separate downloadable CSVs for data centers, chillers and cooling towers. Use these cooling-equipment tables: they make D1 more relevant to this topic than a site-power-only dataset. However, equipment presence/capacity is not equivalent to measured cooling energy, coefficient of performance (COP), or temperature telemetry. Do not calculate those without the required measurements.
+
+
 These sources are complementary, not interchangeable:
 
-- **D1 / D4:** likely facility-scale context and infrastructure characteristics.
+- **D1:** facility-scale context plus distinct cooling-equipment inventory tables (chillers and cooling towers); verify their columns before claiming efficiency metrics.
+- **D4:** candidate facility-scale dataset; verify schema and provenance before assigning a role.
 - **D2:** physical thermal/airflow evidence from experiment and CFD.
 - **D3:** peer-reviewed modelling methodology and a reference for forecasting thermal conditions; the paper itself does not provide an open raw dataset at this URL.
 
@@ -148,7 +152,7 @@ State whether a negative change is desirable for the particular metric. For temp
 ## Immediate next steps
 
 1. Download D2's experimental temperature archive first; inspect its README/metadata and file tree before touching the full CFD archives.
-2. Download D1 and preserve the original file plus its access date/version.
+2. Download D1's main AI data-center CSV and its separate `Data center cooling: Chillers` and `Data center cooling: Cooling towers` CSVs. The page documents all three downloads; retain them as separate tables and preserve the access date/version.
 3. Obtain D4 and inspect its data card, schema and license. Do not use it until its contents are verified.
 4. Treat D3 as a methodology source; if its underlying operational data is required, follow the paper's data-request route or evaluate the separate dataset linked by the paper.
 5. Build the dataset audit notebook before producing charts or training models.
